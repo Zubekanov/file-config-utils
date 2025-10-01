@@ -1,4 +1,5 @@
 from enum import Enum
+import csv
 import os
 import json
 from typing import Any
@@ -130,6 +131,8 @@ class FileConfigReader:
 			return self.load_config(full_path, ConfTypes.KEY_VALUE)
 		if parse_known_types and ext == ".sql":
 			return self.load_sql(full_path)
+		if parse_known_types and ext == ".csv":
+			return self.load_csv(full_path)
 
 		with open(full_path, "r", encoding="utf-8", errors="replace") as f:
 			return f.read()
@@ -199,6 +202,39 @@ class FileConfigReader:
 			commands.append(' '.join(current_command).strip())
 
 		return commands
+
+	@staticmethod
+	def load_csv(path: str,
+	            has_header: bool = True,
+	            delimiter: str | None = None,
+	            required_columns: list[str] | None = None,
+	            encoding: str = "utf-8",
+	            errors: str = "strict") -> list[dict[str, Any]] | list[list[str]]:
+		if not os.path.exists(path):
+			raise FileNotFoundError(f"CSV file not found: {path}")
+
+		delim = delimiter
+		if delim is None:
+			with open(path, "r", encoding=encoding, errors=errors, newline="") as f:
+				sample = f.read(2048)
+				f.seek(0)
+				try:
+					delim = csv.Sniffer().sniff(sample).delimiter
+				except Exception:
+					delim = ","
+
+		with open(path, "r", encoding=encoding, errors=errors, newline="") as f:
+			if has_header:
+				reader = csv.DictReader(f, delimiter=delim)
+				headers = reader.fieldnames or []
+				if required_columns:
+					missing = [c for c in required_columns if c not in headers]
+					if missing:
+						raise KeyError(f"Missing required CSV columns: {', '.join(missing)}")
+				return [dict(row) for row in reader]
+			else:
+				reader = csv.reader(f, delimiter=delim)
+				return [list(row) for row in reader]
 
 	@classmethod
 	def invalidate_caches(cls, *, config_path: str | None = None, root: str | None = None) -> None:
