@@ -1,8 +1,10 @@
-from enum import Enum
 import csv
-import os
 import json
+import os
+from enum import Enum
 from typing import Any
+
+import pandas as pd
 
 fcr_dir    = os.path.dirname(os.path.abspath(__file__))
 fcr_config = os.path.join(fcr_dir, "config.conf")
@@ -82,7 +84,7 @@ class FileConfigReader:
 	def find(self,
 	         name: str,
 	         start: str | None = None,
-	         parse_known_types: bool = True) -> dict[str, Any] | str | list[str]:
+	         parse_known_types: bool = True) -> dict[str, Any] | str | list[str] | pd.DataFrame:
 		"""
 		Deterministic single-result lookup using the cached tree only.
 
@@ -209,13 +211,14 @@ class FileConfigReader:
 	            delimiter: str | None = None,
 	            required_columns: list[str] | None = None,
 	            encoding: str = "utf-8",
-	            errors: str = "strict") -> list[dict[str, Any]] | list[list[str]]:
+	            errors: str = "strict") -> pd.DataFrame:
 		if not os.path.exists(path):
 			raise FileNotFoundError(f"CSV file not found: {path}")
 
+		# Determine delimiter (sniff once)
 		delim = delimiter
-		if delim is None:
-			with open(path, "r", encoding=encoding, errors=errors, newline="") as f:
+		with open(path, "r", encoding=encoding, errors=errors, newline="") as f:
+			if delim is None:
 				sample = f.read(2048)
 				f.seek(0)
 				try:
@@ -223,18 +226,24 @@ class FileConfigReader:
 				except Exception:
 					delim = ","
 
-		with open(path, "r", encoding=encoding, errors=errors, newline="") as f:
-			if has_header:
-				reader = csv.DictReader(f, delimiter=delim)
-				headers = reader.fieldnames or []
-				if required_columns:
-					missing = [c for c in required_columns if c not in headers]
-					if missing:
-						raise KeyError(f"Missing required CSV columns: {', '.join(missing)}")
-				return [dict(row) for row in reader]
-			else:
-				reader = csv.reader(f, delimiter=delim)
-				return [list(row) for row in reader]
+			# Read with pandas; using engine='python' to be tolerant of odd rows
+			df = pd.read_csv(
+				f,
+				delimiter=delim,
+				header=0 if has_header else None,
+				engine="python",
+				on_bad_lines="skip"
+			)
+
+		if not has_header:
+			df.columns = [f"col_{i}" for i in range(df.shape[1])]
+
+		if required_columns:
+			missing = [c for c in required_columns if c not in df.columns]
+			if missing:
+				raise KeyError(f"Missing required CSV columns: {', '.join(missing)}")
+
+		return df
 
 	@classmethod
 	def invalidate_caches(cls, *, config_path: str | None = None, root: str | None = None) -> None:
